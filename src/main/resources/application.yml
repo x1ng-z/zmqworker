@@ -1,0 +1,18 @@
+# 应用名称
+spring:
+  application:
+  name: zmqworker
+# 应用服务 WEB 访问端口
+server:
+  port: 8080
+
+dataresource:
+  url: http://127.0.0.1/iot
+  node:
+  writeType:
+
+zmq:
+  broker: tcp://localhost:5555
+  verbose: true
+
+
