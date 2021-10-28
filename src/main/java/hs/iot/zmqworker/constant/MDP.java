@@ -13,13 +13,15 @@ public enum MDP
 
     /**
      * This is the version of MDP/Client we implement
+     * 连接的类型：客户端
      */
-    C_CLIENT("MDPC01"),
+    C_CLIENT("MDPC"),
 
     /**
      * This is the version of MDP/Worker we implement
+     * 连接的类型：服务器
      */
-    W_WORKER("MDPW01"),
+    W_WORKER("MDPW"),
 
     // MDP/Server commands, as byte values
     W_READY(1),

@@ -1,18 +1,27 @@
 # 应用名称
 spring:
   application:
-  name: zmqworker
+    name: iot_zmq
+  profiles:
+    active: dev
 # 应用服务 WEB 访问端口
 server:
   port: 8080
 
 dataresource:
-  url: http://127.0.0.1/iot
-  node:
-  writeType:
+  url: http://192.168.6.58/iot
+  nodes: OPC3#
+  writeType: write
+  flush: 5000
 
 zmq:
-  broker: tcp://localhost:5555
-  verbose: true
+  broker: tcp://172.16.22.107:5555
+  verbose: false
+  identify: iot_01
+  servename: iot
+  liveness: 3
+  heartbeat: 2500
+  timeout: 2500
+
 
 

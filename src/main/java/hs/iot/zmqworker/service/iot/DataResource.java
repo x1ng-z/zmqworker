@@ -3,6 +3,7 @@ package hs.iot.zmqworker.service.iot;
 import hs.iot.zmqworker.model.dto.iot.IotMeasurePointCell;
 import hs.iot.zmqworker.model.dto.iot.IotReadNodeInfo;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -19,7 +20,7 @@ public interface DataResource {
     /**
      *点位数据读取
      * */
-    void readLastValue(List<IotReadNodeInfo> points);
+    void readLastValue(Collection<IotReadNodeInfo> points);
 
     /**
      * 数据反写

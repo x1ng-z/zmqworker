@@ -1,17 +1,33 @@
 package hs.iot.zmqworker.service.opc;
 
+
+import hs.iot.zmqworker.config.ZeroMqConfig;
+import hs.iot.zmqworker.constant.DataType;
+import hs.iot.zmqworker.constant.OperateType;
+import hs.iot.zmqworker.model.bean.BaseMessage;
+import hs.iot.zmqworker.model.bean.WriteMessage;
 import hs.iot.zmqworker.model.dto.iot.IotMeasurePointCell;
 import hs.iot.zmqworker.model.dto.iot.IotReadNodeInfo;
+import hs.iot.zmqworker.model.dto.opc.RegisterPointDto;
+import hs.iot.zmqworker.service.handle.Handle;
+import hs.iot.zmqworker.service.handle.HandleManage;
 import hs.iot.zmqworker.service.iot.IotService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+import org.springframework.util.ObjectUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -21,52 +37,164 @@ import java.util.stream.Collectors;
  */
 @Service
 @Slf4j
-public class OpcService {
+@DependsOn(value="iotService")
+public class OpcService{
 
-    /*客户端注册完成以后的点位*/
-    private Map<String/*clientid*/, List<IotReadNodeInfo>> clientRegisterPointCache=new ConcurrentHashMap<>();
+    /*客户端注册完成以后的点位,换成下注册点位，用于读取数据时提交至iot*/
+    //主要用于位号数据缓存
+    private Map<String/*tag <opcserve style>*/,IotReadNodeInfo> clientRegisterPointCache=new ConcurrentHashMap<>();
 
-    @Autowired
+    private LinkedBlockingQueue<BaseMessage> messagequeue=new LinkedBlockingQueue();
+
     private IotService iotService;
+    private ExecutorService executorService;
+    private ZeroMqConfig zeroMqConfig;
+    private HandleManage handleManage;
+    @Autowired
+    public OpcService(IotService iotService,
+                      ExecutorService executorService,
+                      ZeroMqConfig zeroMqConfig,
+                      HandleManage handleManage) {
+        this.iotService=iotService;
+        this.executorService=executorService;
+        this.zeroMqConfig=zeroMqConfig;
+        this.handleManage=handleManage;
 
 
-    public void register(List<IotMeasurePointCell> points){
+        //第一次先将数据缓冲到这里面
+        List<IotMeasurePointCell> iotMeasurePointCells=iotService.initDataResource();
+        iotMeasurePointCells.forEach(i->{
+            IotReadNodeInfo iotReadNodeInfo=IotReadNodeInfo.builder()
+                    .node(i.getNodeCode())//zeroMqConfig.getServename()+"/"+p.getNode()
+                    .name(i.getName())
+                    .id(i.getId())
+                    .exist(true)
+                    .measurePoint(i.getCode())
+                    .build();
+            clientRegisterPointCache.put(i.getCode(),iotReadNodeInfo);
+        });
+
+        //处理消息的线程
+        executorService.execute(new Runnable() {
+            @Override
+            public void run() {
+                while (!Thread.interrupted()){
+                    try {
+                        BaseMessage baseMessage=messagequeue.take();
+                        Handle handle=handleManage.getHandleMapp().get(baseMessage.getOperateType());
+                        handle.handle(baseMessage);
+                    } catch (InterruptedException e) {
+                        log.error(e.getMessage(),e);
+                    }
+                }
+
+            }
+        });
+
+
+    }
+
+
+    /**
+     * @param registerPointDto  opcserve style
+     * */
+    public void register(RegisterPointDto registerPointDto){
+        List<IotMeasurePointCell> points=registerPointDto.getPoints();
         if(!CollectionUtils.isEmpty(points)){
             for(IotMeasurePointCell point :points){
-                point.setExist(iotService.isPointExist(point));
+                if(iotService.isPointExist(point)){
+                    point.setExist(true);
+                    IotReadNodeInfo iotReadNodeInfo=new IotReadNodeInfo();
+                    iotReadNodeInfo.setNode(point.getNodeCode());
+                    iotReadNodeInfo.setMeasurePoint(point.getCode());
+                    iotReadNodeInfo.setDataType(point.getPointType());
+                    if(!clientRegisterPointCache.containsKey(iotReadNodeInfo.getMeasurePoint())){
+                        clientRegisterPointCache.put(iotReadNodeInfo.getMeasurePoint(),iotReadNodeInfo);
+                    }
+                }else{
+                    point.setExist(false);
+                }
+
             }
         }
     }
 
-    public List<IotReadNodeInfo> read(String clientid){
-        if(clientRegisterPointCache.containsKey(clientid)){
-            if(!CollectionUtils.isEmpty(clientRegisterPointCache.get(clientid))){
-                iotService.readLastValue(clientRegisterPointCache.get(clientid));
-                List<IotReadNodeInfo> changepoints=clientRegisterPointCache.get(clientid).stream().filter(p->{
-                    if(p.getLastValue()==null){
-                        p.setLastValue(p.getValue());
-                        return true;
-                    }else if(!p.getValue().equals(p.getLastValue())){
-                        p.setLastValue(p.getValue());
+    public List<IotReadNodeInfo> read(){
+        List<IotReadNodeInfo> res=new ArrayList<>(clientRegisterPointCache.values());;
+            if(!CollectionUtils.isEmpty(res)){
+                iotService.read(new ArrayList<>(clientRegisterPointCache.values()));
+                //更新改为去缓存中获取数据
+                List<IotReadNodeInfo> changepoints=res.stream().filter(p->{
+                        p.setDataType(0);//初始化成无效数据类型，后面会进行判断赋值
+                    //数据类型判断
+                    if(!ObjectUtils.isEmpty(p.getValue())){
+                        Arrays.stream(DataType.values()).forEach(c->{
+                            if(c.getCode()!=DataType.DATA_TYPE_INVALIDE.getCode()&&c.getClazz().isInstance(p.getValue())){
+                                p.setDataType(c.getCode());
+                            }
+                        });
+                        if(p.getValue().toString().contains(".")){
+                            try {
+                                Double aDouble=Double.valueOf(p.getValue().toString());
+                                if(aDouble<=Float.MIN_VALUE || aDouble>=Float.MAX_VALUE){
+                                    p.setDataType(DataType.DATA_TYPE_DOUBLE.getCode());
+                                }else{
+                                    p.setDataType(DataType.DATA_TYPE_FLOAT.getCode());
+                                }
+                            } catch (NumberFormatException e) {
+
+                            }
+                        }else{
+                            try {
+                                Long aLong=Long.valueOf(p.getValue().toString());
+                                if(aLong<=Integer.MIN_VALUE||aLong>=Float.MAX_VALUE){
+                                    p.setDataType(DataType.DATA_TYPE_LONG.getCode());
+                                }else{
+                                    p.setDataType(DataType.DATA_TYPE_INT.getCode());
+                                }
+                            } catch (NumberFormatException e) {
+                            }
+                        }
+                        //数据是否发生变化了
+                        if(p.getLastValue()==null){
+                            p.setLastValue(p.getValue());
                             return true;
-                    }else{
-                        p.setLastValue(p.getValue());
+                        }else if(!p.getValue().equals(p.getLastValue())){
+                            p.setLastValue(p.getValue());
+                            return true;
+                        }else{
+                            p.setLastValue(p.getValue());
+                            return false;
+                        }
+                    }else {
                         return false;
                     }
+
                 }).collect(Collectors.toList());
+
                 return changepoints;
             }
-        }
-        return new ArrayList<>();
+        return res;
     }
 
     public void write(List<IotReadNodeInfo> points){
         if(!CollectionUtils.isEmpty(points)){
-            /*按照node 分类*/
-            Map<String,List<IotReadNodeInfo>> nodepoints=points.stream().collect(Collectors.groupingBy(IotReadNodeInfo::getNode,Collectors.toList()));
-            nodepoints.forEach((k,v)->{
-                iotService.write(v);
+            WriteMessage writeMessage=new WriteMessage();
+            writeMessage.setPoints(points);
+            writeMessage.setOperateType(OperateType.OPERATE_TYPE_WRITE);
+            messagequeue.offer(writeMessage);
+            //这里默认反写成功了
+            points.forEach(p->{
+                p.setIswrite(true);
             });
         }
     }
+
+    public List<IotMeasurePointCell> initDataResource(){
+        //reset lastvalue
+        clientRegisterPointCache.values().forEach((p)->{p.setLastValue(null);});
+        return iotService.initDataResource();
+    }
+
+
 }

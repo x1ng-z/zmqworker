@@ -19,12 +19,16 @@ import java.io.Serializable;
 @AllArgsConstructor
 @NoArgsConstructor
 public class IotReadNodeInfo implements Serializable {
+     private Long id;
      private String node;
      private String measurePoint;
      private Object value;
      private Long time;
+     private int dataType;
+     private boolean iswrite;
+     private String name;
      @JSONField(serialize = false)
-     private boolean isExist;
+     private boolean exist;
      @JSONField(serialize = false)
      private Object lastValue;/*上一次的值*/
 }

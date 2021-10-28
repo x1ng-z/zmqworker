@@ -23,6 +23,7 @@ public class DataResourceConfig implements InitializingBean {
     private String url;
     private String[] nodes;
     private String[] writeType;
+    private Long flush;
 
     private Map<String, String> nodeWriteMapping = new HashMap();
 
@@ -34,6 +35,7 @@ public class DataResourceConfig implements InitializingBean {
 
     private String urlPointPage = "/api/measure-point/page";
 
+    private String urliotnodelist = "/api/node/list";
     @Override
     public void afterPropertiesSet() throws Exception {
         if ((!isEmpty(nodes))&&(!isEmpty(writeType))) {

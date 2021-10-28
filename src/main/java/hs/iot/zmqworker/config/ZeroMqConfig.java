@@ -15,4 +15,9 @@ import org.springframework.context.annotation.Configuration;
 public class ZeroMqConfig {
     private String broker;
     private Boolean verbose;
+    private String identify;
+    private String servename;
+    private int liveness;
+    private int heartbeat;
+    private int timeout;
 }
