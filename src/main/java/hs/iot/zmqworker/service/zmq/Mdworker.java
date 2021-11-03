@@ -70,7 +70,13 @@ public class Mdworker{
         Mdwrkapi workerSession = new Mdwrkapi(iotService, zeroMqConfig.getBroker(), zeroMqConfig.getServename()+subName, zeroMqConfig.getVerbose(), zeroMqConfig.getIdentify()+subName,zeroMqConfig);
         ZMsg reply = null;
         while (!Thread.currentThread().isInterrupted()) {
-            ZMsg request = workerSession.receive(reply);
+            ZMsg request = null;
+            try {
+                request = workerSession.receive(reply);
+            } catch (Exception e) {
+                log.error(e.getMessage(),e);
+                continue;
+            }
             if (request == null) {
                 break; //Interrupted
             }

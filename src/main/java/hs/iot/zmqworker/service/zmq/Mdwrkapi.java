@@ -214,6 +214,11 @@ public class Mdwrkapi {
 
         }catch (Exception e){
             log.error(e.getMessage(),e);
+            items.unregister(worker);
+            if(e.getCause() instanceof java.nio.channels.ClosedChannelException){
+                reconnectToBroker();
+            }
+            throw new RuntimeException(e.getCause());
         }finally {
             items.unregister(worker);
             items.close();
