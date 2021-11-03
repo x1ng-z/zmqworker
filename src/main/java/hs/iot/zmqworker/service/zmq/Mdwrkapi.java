@@ -93,6 +93,7 @@ public class Mdwrkapi {
     void reconnectToBroker() {
         if (worker != null) {
             ctx.destroySocket(worker);
+            worker=null;
         }
         worker = ctx.createSocket(SocketType.DEALER);
         worker.setLinger(0);
@@ -127,86 +128,96 @@ public class Mdwrkapi {
             reply.destroy();
         }
         expectReply = true;
+        ZMQ.Poller items = ctx.createPoller(1);
 
-        while (!Thread.currentThread().isInterrupted()) {
-            // Poll socket for a reply, with timeout
-            ZMQ.Poller items = ctx.createPoller(1);
-            items.register(worker, ZMQ.Poller.POLLIN);
-            if (items.poll(timeout) == -1) {
-                break; // Interrupted
-            }
+        try {
+            while (!Thread.currentThread().isInterrupted()) {
+                // Poll socket for a reply, with timeout
 
-            if (items.pollin(0)) {
-                ZMsg msg = ZMsg.recvMsg(worker);
-                if (msg == null) {
+                items.register(worker, ZMQ.Poller.POLLIN);
+                if (items.poll(timeout) == -1) {
                     break; // Interrupted
                 }
 
-                if (verbose) {
-                    log.debug("I: received message from broker: \n");
-                    msg.dump(System.out);
-                }
-                liveness = zeroMqConfig.getLiveness();//HEARTBEAT_LIVENESS;
-                // Don't try to handle errors, just assert noisily
-                /**
-                * 接受到的格式
-                 * [0]分隔符
-                 * [1]服务/客户端标识（此处无意义）
-                 * [2]command【心跳】【请求】【断开链接】等
-                 * [3]
-                * */
-                assert (msg != null && msg.size() >= 3);
+                if (items.pollin(0)) {
+                    ZMsg msg = ZMsg.recvMsg(worker);
+                    if (msg == null) {
+                        break; // Interrupted
+                    }
 
-                ZFrame empty = msg.pop();
-                assert (empty.getData().length == 0);
-                empty.destroy();
+                    if (verbose) {
+                        log.debug("I: received message from broker: \n");
+                        msg.dump(System.out);
+                    }
+                    liveness = zeroMqConfig.getLiveness();//HEARTBEAT_LIVENESS;
+                    // Don't try to handle errors, just assert noisily
+                    /**
+                    * 接受到的格式
+                     * [0]分隔符
+                     * [1]服务/客户端标识（此处无意义）
+                     * [2]command【心跳】【请求】【断开链接】等
+                     * [3]
+                    * */
+                    assert (msg != null && msg.size() >= 3);
 
-                ZFrame header = msg.pop();
-                assert (MDP.W_WORKER.frameEquals(header));
-                header.destroy();
+                    ZFrame empty = msg.pop();
+                    assert (empty.getData().length == 0);
+                    empty.destroy();
 
-                ZFrame command = msg.pop();
-                if (MDP.W_REQUEST.frameEquals(command)) {
-                    // We should pop and save as many addresses as there are
-                    // up to a null part, but for now, just save one
-                    replyTo = msg.unwrap();
+                    ZFrame header = msg.pop();
+                    assert (MDP.W_WORKER.frameEquals(header));
+                    header.destroy();
+
+                    ZFrame command = msg.pop();
+                    if (MDP.W_REQUEST.frameEquals(command)) {
+                        // We should pop and save as many addresses as there are
+                        // up to a null part, but for now, just save one
+                        replyTo = msg.unwrap();
+                        command.destroy();
+                        return msg; // We have a request to process
+                    } else if (MDP.W_HEARTBEAT.frameEquals(command)) {
+                        // Do nothing for heartbeats
+                    } else if (MDP.W_DISCONNECT.frameEquals(command)) {
+                        reconnectToBroker();
+                    } else {
+                        log.error("E: invalid input message: \n");
+                        msg.dump(System.out);
+                    }
                     command.destroy();
-                    return msg; // We have a request to process
-                } else if (MDP.W_HEARTBEAT.frameEquals(command)) {
-                    // Do nothing for heartbeats
-                } else if (MDP.W_DISCONNECT.frameEquals(command)) {
+                    msg.destroy();
+                } else if (--liveness == 0) {
+                    items.unregister(worker);
+                    if (verbose) {
+                        log.debug("W: disconnected from broker - retrying\n");
+                    }
+                    try {
+                        Thread.sleep(reconnect);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt(); // Restore the
+                        // interrupted status
+                        break;
+                    }
                     reconnectToBroker();
-                } else {
-                    log.error("E: invalid input message: \n");
-                    msg.dump(System.out);
-                }
-                command.destroy();
-                msg.destroy();
-            } else if (--liveness == 0) {
-                if (verbose) {
-                    log.debug("W: disconnected from broker - retrying\n");
-                }
-                try {
-                    Thread.sleep(reconnect);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt(); // Restore the
-                    // interrupted status
-                    break;
-                }
-                reconnectToBroker();
 
+                }
+                // Send HEARTBEAT if it's time
+                if (System.currentTimeMillis() > heartbeatAt) {
+                    sendToBroker(MDP.W_HEARTBEAT, null, null);
+                    heartbeatAt = System.currentTimeMillis() + heartbeat;
+                }
+                items.unregister(worker);
+            }//end
+            // items.close();
+            if (Thread.currentThread().isInterrupted()) {
+                log.debug("W: interrupt received, killing worker\n");
             }
-            // Send HEARTBEAT if it's time
-            if (System.currentTimeMillis() > heartbeatAt) {
-                sendToBroker(MDP.W_HEARTBEAT, null, null);
-                heartbeatAt = System.currentTimeMillis() + heartbeat;
-            }
+
+        }catch (Exception e){
+            log.error(e.getMessage(),e);
+        }finally {
+            items.unregister(worker);
             items.close();
-        }
-        if (Thread.currentThread().isInterrupted()) {
-            log.debug("W: interrupt received, killing worker\n");
-        }
-        return null;
+        }  return null;
     }
 
     public void destroy() {

@@ -24,6 +24,7 @@ public class DataResourceConfig implements InitializingBean {
     private String[] nodes;
     private String[] writeType;
     private Long flush;
+    private int batchWrite;
 
     private Map<String, String> nodeWriteMapping = new HashMap();
 

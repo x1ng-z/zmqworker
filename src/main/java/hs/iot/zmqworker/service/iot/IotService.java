@@ -1,6 +1,5 @@
 package hs.iot.zmqworker.service.iot;
 
-import com.alibaba.fastjson.JSONObject;
 import hs.iot.zmqworker.config.DataResourceConfig;
 import hs.iot.zmqworker.config.ZeroMqConfig;
 import hs.iot.zmqworker.constant.DataType;
@@ -8,12 +7,10 @@ import hs.iot.zmqworker.constant.WriteType;
 import hs.iot.zmqworker.model.dto.iot.*;
 import hs.iot.zmqworker.model.dto.iot.node.IotNodeDto;
 import hs.iot.zmqworker.model.dto.iot.node.NodeInfoDto;
-import hs.iot.zmqworker.service.handle.HandleManage;
-import hs.iot.zmqworker.utils.HttpClient;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -46,15 +43,10 @@ public class IotService implements DataResource, InitializingBean {
     @Autowired
     private RestTemplate restTemplate;
     @Autowired
-    private ExecutorService executorService;
-
-
-
+    @Qualifier("app-thread")
+    private ExecutorService appExecutorService;
     /*缓存节点和位号信息*/
     private Map<String/*nodecode*/, Map<String/*code <iot style>*/, IotReadNodeInfo>> cacheForPoints = new ConcurrentHashMap<>();
-
-
-
 
     /**项目启动去iot获取点位数据,并开启线程进行数据*/
     @Override
@@ -62,7 +54,7 @@ public class IotService implements DataResource, InitializingBean {
         //第一次直接自动刷新
         flushPointCache();
 
-        executorService.execute(new Runnable() {
+        appExecutorService.execute(new Runnable() {
             @Override
             public void run() {
                 flushDataCache();
@@ -83,7 +75,7 @@ public class IotService implements DataResource, InitializingBean {
     /**数据刷新*/
     public void flushDataCache() {
         while (!Thread.interrupted()){
-            log.debug("try to flush data");
+//            log.debug("try to flush data");
             try {
                 if(!CollectionUtils.isEmpty(cacheForPoints)){
                     cacheForPoints.keySet().stream().forEach(node->{
@@ -240,8 +232,10 @@ public class IotService implements DataResource, InitializingBean {
     @Override
     public void write(List<IotReadNodeInfo> points) {
 
-        List<IotReadNodeInfo> point_s=points.stream().filter(p->{return converIotStyle(p);}).collect(Collectors.toList());
-
+        List<IotReadNodeInfo> point_s=points.stream()/*.filter(p->{return converIotStyle(p);})*/.collect(Collectors.toList());
+        StringBuilder stringBuilder=new StringBuilder();
+        point_s.forEach(p->{stringBuilder.append(p.getMeasurePoint()+";");});
+        log.debug("write tag={}",stringBuilder.toString());
         IotDcsWriteDto iotDcsWriteDto=IotDcsWriteDto.builder()
                 .points(point_s)
                 .build();

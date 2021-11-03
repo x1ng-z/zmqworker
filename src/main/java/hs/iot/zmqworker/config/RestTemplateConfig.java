@@ -30,12 +30,14 @@ import java.net.UnknownHostException;
 @Configuration
 public class RestTemplateConfig {
 
-    @Bean("nocloud")
+    @Bean("app-restTemplate")
     public RestTemplate restTemplate() {
         HttpComponentsClientHttpRequestFactory httpRequestFactory =
                 new HttpComponentsClientHttpRequestFactory(httpClient());
         return new RestTemplate(httpRequestFactory);
     }
+
+
 
 
 

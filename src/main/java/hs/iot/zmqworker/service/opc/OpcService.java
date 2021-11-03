@@ -1,6 +1,7 @@
 package hs.iot.zmqworker.service.opc;
 
 
+import hs.iot.zmqworker.config.DataResourceConfig;
 import hs.iot.zmqworker.config.ZeroMqConfig;
 import hs.iot.zmqworker.constant.DataType;
 import hs.iot.zmqworker.constant.OperateType;
@@ -14,12 +15,12 @@ import hs.iot.zmqworker.service.handle.HandleManage;
 import hs.iot.zmqworker.service.iot.IotService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.ObjectUtils;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -27,8 +28,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import static hs.iot.zmqworker.constant.OperateType.OPERATE_TYPE_WRITE;
 
 /**
  * @author zzx
@@ -44,20 +46,28 @@ public class OpcService{
     //主要用于位号数据缓存
     private Map<String/*tag <opcserve style>*/,IotReadNodeInfo> clientRegisterPointCache=new ConcurrentHashMap<>();
 
-    private LinkedBlockingQueue<BaseMessage> messagequeue=new LinkedBlockingQueue();
+    private LinkedBlockingQueue<BaseMessage> writeMessageQueue =new LinkedBlockingQueue();
 
     private IotService iotService;
-    private ExecutorService executorService;
+    private ExecutorService appExecutorService;
+    private ExecutorService writeExecutorService;
     private ZeroMqConfig zeroMqConfig;
     private HandleManage handleManage;
+    private DataResourceConfig dataResourceConfig;
     @Autowired
     public OpcService(IotService iotService,
-                      ExecutorService executorService,
+                      @Qualifier("app-thread")
+                      ExecutorService appExecutorService,
+                      @Qualifier("write-thread")
+                      ExecutorService writeExecutorService,
                       ZeroMqConfig zeroMqConfig,
+                      DataResourceConfig dataResourceConfig,
                       HandleManage handleManage) {
         this.iotService=iotService;
-        this.executorService=executorService;
+        this.appExecutorService = appExecutorService;
+        this.writeExecutorService=writeExecutorService;
         this.zeroMqConfig=zeroMqConfig;
+        this.dataResourceConfig=dataResourceConfig;
         this.handleManage=handleManage;
 
 
@@ -74,15 +84,28 @@ public class OpcService{
             clientRegisterPointCache.put(i.getCode(),iotReadNodeInfo);
         });
 
-        //处理消息的线程
-        executorService.execute(new Runnable() {
+        //处理写消息的处理线程
+        appExecutorService.execute(new Runnable() {
             @Override
             public void run() {
                 while (!Thread.interrupted()){
                     try {
-                        BaseMessage baseMessage=messagequeue.take();
-                        Handle handle=handleManage.getHandleMapp().get(baseMessage.getOperateType());
-                        handle.handle(baseMessage);
+                        BaseMessage baseMessage= writeMessageQueue.take();
+                        //判断messagequeue内的数据大小
+                        List<BaseMessage> batchMessage=new ArrayList<>();
+                        int batchSize= writeMessageQueue.drainTo(batchMessage,dataResourceConfig.getBatchWrite()<=0?500:dataResourceConfig.getBatchWrite());
+                        batchMessage.add(baseMessage);
+                        Long bengin=System.currentTimeMillis();
+                        log.debug("WRITE BATCH SIZE={}",batchSize+1);
+                        //采用写进程进行处理
+//                        writeExecutorService.execute(new Runnable() {
+//                            @Override
+//                            public void run() {
+                                Handle handle=handleManage.getHandleMapp().get(OperateType.OPERATE_TYPE_WRITE);
+                                handle.handle(batchMessage);
+//                            }
+//                        });
+                        log.debug("WRITE BATCH SIZE={} write complete,cost={}",batchSize+1,System.currentTimeMillis()-bengin);
                     } catch (InterruptedException e) {
                         log.error(e.getMessage(),e);
                     }
@@ -181,8 +204,8 @@ public class OpcService{
         if(!CollectionUtils.isEmpty(points)){
             WriteMessage writeMessage=new WriteMessage();
             writeMessage.setPoints(points);
-            writeMessage.setOperateType(OperateType.OPERATE_TYPE_WRITE);
-            messagequeue.offer(writeMessage);
+            writeMessage.setOperateType(OPERATE_TYPE_WRITE);
+            writeMessageQueue.offer(writeMessage);
             //这里默认反写成功了
             points.forEach(p->{
                 p.setIswrite(true);

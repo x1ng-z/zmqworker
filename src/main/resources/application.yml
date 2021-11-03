@@ -10,9 +10,10 @@ server:
 
 dataresource:
   url: http://192.168.6.58/iot
-  nodes: OPC3#
+  nodes: WF3
   writeType: write
   flush: 5000
+  batchWrite: 1000
 
 zmq:
   broker: tcp://172.16.22.107:5555

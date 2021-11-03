@@ -12,12 +12,12 @@ import hs.iot.zmqworker.model.dto.opc.*;
 import hs.iot.zmqworker.service.iot.IotService;
 import hs.iot.zmqworker.service.opc.OpcService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.zeromq.ZFrame;
 import org.zeromq.ZMQ;
 import org.zeromq.ZMsg;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -38,21 +38,22 @@ public class Mdworker{
 
     private OpcService opcService;
 
-    private ExecutorService executorService;
+    private ExecutorService appExecutorService;
 
     public Mdworker(ZeroMqConfig zeroMqConfig,
                     IotService iotService,
                     OpcService opcService,
-                    ExecutorService executorService) {
+                    @Qualifier("app-thread")
+                    ExecutorService appExecutorService) {
         this.zeroMqConfig = zeroMqConfig;
 
         this.iotService = iotService;
         this.opcService = opcService;
-        this.executorService=executorService;
+        this.appExecutorService = appExecutorService;
 
         //开启服务，处理代理转发的消息
         Arrays.stream(SubServeName.values())/*.filter((s)->(s.getName().equals("/init")||s.getName().equals("/register")))*/.forEach(s->{
-            executorService.execute(new Runnable() {
+            appExecutorService.execute(new Runnable() {
                 @Override
                 public void run() {
                     buildService(s.getName());
